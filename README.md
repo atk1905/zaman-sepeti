@@ -51,15 +51,17 @@ Sonra tarayıcıda aç:
 
 Repo, config dosyası varsa otomatik olarak canlı moda geçer.
 
-1. `config.js` içindeki değerleri doldur:
+1. `config.js` içindeki değerleri doldur. İstersen Supabase environment değişkenlerinden kopyala:
 
 ```js
 window.ZS_CONFIG = {
   supabaseUrl: 'https://YOUR-PROJECT.supabase.co',
-  supabaseAnonKey: 'YOUR_ANON_KEY',
+  supabaseAnonKey: 'YOUR_PUBLISHABLE_OR_ANON_KEY',
   appName: 'Zaman Sepeti',
 };
 ```
+
+Not: Bu projede public tarafta çalışan anahtar için `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` / `anon` değerini kullan.
 
 2. Supabase tarafında Google ve email OTP auth'u aç
 3. GitHub Pages veya lokal sunucuda sayfayı yenile
