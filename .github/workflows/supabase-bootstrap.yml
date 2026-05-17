@@ -1,0 +1,43 @@
+name: Bootstrap Supabase
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Apply SQL migration
+        env:
+          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_REF: rolmtojoocllqujtswes
+        run: |
+          psql "host=db.${SUPABASE_PROJECT_REF}.supabase.co port=5432 dbname=postgres user=postgres sslmode=require" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/migrations/0001_init.sql
+
+      - name: Verify public categories
+        env:
+          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_REF: rolmtojoocllqujtswes
+        run: |
+          psql "host=db.${SUPABASE_PROJECT_REF}.supabase.co port=5432 dbname=postgres user=postgres sslmode=require" \
+            -v ON_ERROR_STOP=1 \
+            -c "select count(*) as categories from public.categories;"
+
+      - name: Summary
+        run: |
+          {
+            echo 'Supabase bootstrap workflow finished.'
+            echo ''
+            echo '- SQL migration applied from supabase/migrations/0001_init.sql'
+            echo '- Categories table verified'
+          } >> "$GITHUB_STEP_SUMMARY"
