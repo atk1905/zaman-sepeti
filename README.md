@@ -23,6 +23,7 @@ Kurumsal not:
 - Talep oluşturma formu
 - Teklif verme ve teklif kabul etme akışı
 - Kabul sonrası mesajlaşma kilidi
+- Yönetim paneli: arkaplan ayarları, başlangıç görünümü ve AI çalışma masası
 - GitHub Pages deploy workflow
 - Supabase veri modeli ve Edge Function şablonu
 - Hermes için hazır agent komut dokümanı

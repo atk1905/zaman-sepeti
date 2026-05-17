@@ -12,6 +12,66 @@ const categories = [
 
 const cities = ['İstanbul', 'Ankara', 'İzmir', 'Bursa', 'Antalya', 'Online'];
 
+const aiTools = [
+  {
+    key: 'chatgpt',
+    name: 'ChatGPT',
+    role: 'PRD / akış / acceptance',
+    purpose: 'Ürün kararları, kullanıcı akışları ve teslim kriterleri.',
+    prompt: 'Zaman Sepeti için akışları çıkar: talep açma, teklif toplama, teklif kabulü, kabul sonrası sohbet kilidi ve 7 günlük kapanma.',
+    url: 'https://chatgpt.com/',
+  },
+  {
+    key: 'gemini',
+    name: 'Gemini',
+    role: 'Araştırma / risk',
+    purpose: 'Pazar araştırması, rakip analizi ve teknik risk özeti.',
+    prompt: 'Talep odaklı marketplace için rakipleri, olası riskleri ve MVP fırsatlarını kısa maddelerle özetle.',
+    url: 'https://gemini.google.com/',
+  },
+  {
+    key: 'claude',
+    name: 'Claude',
+    role: 'Mimari / review',
+    purpose: 'Kod inceleme, refactor ve mimari denge.',
+    prompt: 'Tek sayfa marketplace kodunu incele; admin panel, settings ve state yönetimi için güvenli bir refactor planı çıkar.',
+    url: 'https://claude.ai/',
+  },
+  {
+    key: 'deepseek',
+    name: 'DeepSeek',
+    role: 'Backend / DB',
+    purpose: 'Supabase, SQL, şema ve performans analizi.',
+    prompt: 'Supabase şemasını, RLS kurallarını ve live-mode veri akışını değerlendir; eksik noktaları öner.',
+    url: 'https://chat.deepseek.com/',
+  },
+  {
+    key: 'qwen',
+    name: 'Qwen',
+    role: 'Patch / helper',
+    purpose: 'Küçük patch’ler, regex, utility kodu.',
+    prompt: 'Bir frontend statik uygulamasına ayar paneli ve temiz event binding eklemek için kısa patch önerileri üret.',
+    url: 'https://chat.qwen.ai/',
+  },
+  {
+    key: 'lovable',
+    name: 'Lovable',
+    role: 'UI prototip',
+    purpose: 'Ekran akışı, layout ve responsive düzen.',
+    prompt: 'Zaman Sepeti için admin panel, arkaplan ayarları ve AI çalışma masası olan modern bir arayüz öner.',
+    url: 'https://lovable.dev/',
+  },
+];
+
+const DEFAULT_SETTINGS = {
+  accentHue: 262,
+  orb1Opacity: 0.48,
+  orb2Opacity: 0.22,
+  gridOpacity: 0.025,
+  glassBlur: 22,
+  defaultView: 'home',
+};
+
 const appConfig = window.ZS_CONFIG || {};
 const hasSupabaseConfig = Boolean(appConfig.supabaseUrl && appConfig.supabaseAnonKey && window.supabase);
 let supabaseClient = null;
@@ -353,6 +413,7 @@ function seedState() {
     selectedListingId: 'l3',
     selectedThreadId: 'l3',
     listings: createSeedListings(),
+    settings: { ...DEFAULT_SETTINGS },
   };
 }
 
@@ -362,7 +423,8 @@ function loadState() {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
     const savedView = localStorage.getItem(VIEW_KEY);
     if (saved && Array.isArray(saved.listings)) {
-      base.view = savedView || saved.view || base.view;
+      base.settings = { ...base.settings, ...(saved.settings || {}) };
+      base.view = savedView || saved.view || base.settings.defaultView || base.view;
       base.filterCategory = saved.filterCategory || base.filterCategory;
       base.filterCity = saved.filterCity || base.filterCity;
       base.filterBudget = saved.filterBudget || base.filterBudget;
@@ -378,6 +440,19 @@ function loadState() {
 
 let state = loadState();
 const app = document.getElementById('app');
+
+function applyTheme() {
+  state.settings = { ...DEFAULT_SETTINGS, ...(state.settings || {}) };
+  const root = document.documentElement;
+  root.style.setProperty('--accent-hue', String(state.settings.accentHue));
+  root.style.setProperty('--orb-1-opacity', String(state.settings.orb1Opacity));
+  root.style.setProperty('--orb-2-opacity', String(state.settings.orb2Opacity));
+  root.style.setProperty('--grid-opacity', String(state.settings.gridOpacity));
+  root.style.setProperty('--glass-blur', `${state.settings.glassBlur}px`);
+  if (app) app.dataset.density = state.settings.defaultView === 'compact' ? 'compact' : 'normal';
+}
+
+applyTheme();
 
 function persist() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -455,6 +530,7 @@ function navButton(label, view) {
 function renderTopbar() {
   const activeCount = state.listings.filter((item) => item.status === 'active').length;
   const acceptedCount = state.listings.filter((item) => item.status === 'accepted').length;
+  const settingLabel = `Tema ${Math.round(state.settings?.accentHue ?? DEFAULT_SETTINGS.accentHue)}°`;
   const authLabel = liveMode
     ? (authUser?.email ? `Canlı: ${authUser.email}` : 'Canlı veri hazır')
     : 'Demo modu';
@@ -479,10 +555,12 @@ function renderTopbar() {
         ${navButton('Mesajlar', 'messages')}
         ${navButton('Profil', 'profile')}
         ${navButton('Hakkında', 'about')}
+        ${navButton('Yönetim', 'admin')}
       </nav>
       <div class="badge-row">
         <span class="pill">${activeCount} aktif talep</span>
         <span class="pill">${acceptedCount} kapalı sohbet</span>
+        <span class="pill">${settingLabel}</span>
         <span class="pill">${authLabel}</span>
         ${authActions}
       </div>
@@ -872,7 +950,122 @@ function renderAbout() {
   `;
 }
 
+function renderAdmin() {
+  const settings = state.settings || DEFAULT_SETTINGS;
+  return `
+    <section class="section admin-shell">
+      <div class="section-head">
+        <div>
+          <h3>Yönetim paneli</h3>
+          <p>Arkaplan ayarları, görünüm başlangıcı ve AI iş bölümü buradan yönetilir.</p>
+        </div>
+        <div class="badge-row">
+          <span class="pill">${liveMode ? 'Supabase bağlı' : 'Demo modu'}</span>
+          <span class="pill">${authUser?.email || 'Anonim yönetici'}</span>
+        </div>
+      </div>
+
+      <div class="admin-layout">
+        <div class="panel admin-panel">
+          <h4>AI çalışma masası</h4>
+          <p class="muted">Her araç için rol, amaç ve kopyalanabilir çalışma metni hazır. Bu panel Zaman Sepeti işlerini önceki AI araç dağılımına göre düzenler.</p>
+          <div class="ai-grid">
+            ${aiTools.map((tool) => `
+              <article class="ai-card">
+                <div class="badge-row">
+                  <span class="pill">${tool.name}</span>
+                  <span class="pill">${tool.role}</span>
+                </div>
+                <p class="muted">${tool.purpose}</p>
+                <pre class="ai-prompt">${tool.prompt}</pre>
+                <div class="hero-actions">
+                  <button class="secondary" data-open-ai="${tool.url}">Aç</button>
+                  <button class="secondary" data-copy-ai="${tool.key}">Kopyala</button>
+                </div>
+              </article>
+            `).join('')}
+          </div>
+        </div>
+
+        <div class="admin-side">
+          <div class="panel admin-panel">
+            <h4>Arkaplan ayarları</h4>
+            <div class="setting-list">
+              <label class="setting-row">
+                <span>
+                  <strong>Accent tonu</strong>
+                  <small>Mor / mavi tonlarını canlı yönet</small>
+                </span>
+                <input type="range" min="210" max="330" step="1" value="${settings.accentHue}" data-setting="accentHue" />
+              </label>
+              <label class="setting-row">
+                <span>
+                  <strong>Sol parlama</strong>
+                  <small>Üst sol mor orb yoğunluğu</small>
+                </span>
+                <input type="range" min="0.05" max="0.9" step="0.01" value="${settings.orb1Opacity}" data-setting="orb1Opacity" />
+              </label>
+              <label class="setting-row">
+                <span>
+                  <strong>Sağ parlama</strong>
+                  <small>Sağ üst yeşil orb yoğunluğu</small>
+                </span>
+                <input type="range" min="0.02" max="0.6" step="0.01" value="${settings.orb2Opacity}" data-setting="orb2Opacity" />
+              </label>
+              <label class="setting-row">
+                <span>
+                  <strong>Izgara görünürlüğü</strong>
+                  <small>Arka plan çizgi dokusu</small>
+                </span>
+                <input type="range" min="0.01" max="0.06" step="0.001" value="${settings.gridOpacity}" data-setting="gridOpacity" />
+              </label>
+              <label class="setting-row">
+                <span>
+                  <strong>Cam bulanıklığı</strong>
+                  <small>Panellerin glassmorphism etkisi</small>
+                </span>
+                <input type="range" min="10" max="32" step="1" value="${settings.glassBlur}" data-setting="glassBlur" />
+              </label>
+              <label class="setting-row">
+                <span>
+                  <strong>Başlangıç görünümü</strong>
+                  <small>Sayfa açılınca ilk görünen ekran</small>
+                </span>
+                <select data-setting="defaultView">
+                  ${['home', 'market', 'create', 'messages', 'profile', 'about', 'admin'].map((view) => `<option value="${view}" ${settings.defaultView === view ? 'selected' : ''}>${view}</option>`).join('')}
+                </select>
+              </label>
+            </div>
+            <div class="hero-actions">
+              <button class="secondary" data-theme-preset="mor">Mor</button>
+              <button class="secondary" data-theme-preset="mavi">Mavi</button>
+              <button class="secondary" data-theme-preset="yesil">Yeşil</button>
+              <button class="secondary" data-reset-settings>Varsayılan</button>
+            </div>
+          </div>
+
+          <div class="panel admin-panel">
+            <h4>Yönetim kısayolları</h4>
+            <div class="listing-list">
+              <div class="offer-item"><strong>Yayın akışı</strong><small>Talep açma, teklif ve sohbet düzeni canlı tutulur.</small></div>
+              <div class="offer-item"><strong>Gelir araçları</strong><small>Öne çıkarma, rozet ve kurumsal vitrin alanları hazır.</small></div>
+              <div class="offer-item"><strong>Operasyon</strong><small>7 günlük süre, kapanış ve moderasyon için temel kurallar açık.</small></div>
+              <div class="offer-item"><strong>Yerel demo</strong><small>Tarayıcı verisini temizleyip sıfır başlangıç yapabilirsin.</small></div>
+            </div>
+            <div class="hero-actions">
+              <button class="primary" data-reset-demo>Yerel demoyu sıfırla</button>
+              <button class="secondary" data-view="market">Canlı akışı aç</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+
 function renderView() {
+  applyTheme();
   const body = (() => {
     switch (state.view) {
       case 'market': return renderMarket();
@@ -880,6 +1073,7 @@ function renderView() {
       case 'profile': return renderProfile();
       case 'messages': return renderMessages();
       case 'about': return renderAbout();
+      case 'admin': return renderAdmin();
       case 'home':
       default: return renderHome();
     }
@@ -1185,6 +1379,66 @@ function bindEvents() {
     btn.addEventListener('click', () => acceptOffer(btn.getAttribute('data-accept-offer'), btn.getAttribute('data-offer-id')));
   });
 
+  document.querySelectorAll('[data-open-ai]').forEach((btn) => {
+    btn.addEventListener('click', () => window.open(btn.getAttribute('data-open-ai'), '_blank', 'noopener,noreferrer'));
+  });
+
+  document.querySelectorAll('[data-copy-ai]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const tool = aiTools.find((item) => item.key === btn.getAttribute('data-copy-ai'));
+      if (!tool) return;
+      await navigator.clipboard.writeText(tool.prompt);
+      btn.textContent = 'Kopyalandı';
+      setTimeout(() => { btn.textContent = 'Kopyala'; }, 1200);
+    });
+  });
+
+  document.querySelectorAll('[data-setting]').forEach((input) => {
+    const commit = () => {
+      const key = input.getAttribute('data-setting');
+      if (!key) return;
+      const value = key === 'defaultView' ? input.value : Number(input.value);
+      state.settings = { ...DEFAULT_SETTINGS, ...(state.settings || {}), [key]: value };
+      applyTheme();
+      persist();
+    };
+    input.addEventListener('input', commit);
+    input.addEventListener('change', commit);
+  });
+
+  document.querySelectorAll('[data-theme-preset]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const preset = btn.getAttribute('data-theme-preset');
+      const next = preset === 'mavi'
+        ? { accentHue: 214, orb1Opacity: 0.33, orb2Opacity: 0.18, gridOpacity: 0.02, glassBlur: 20 }
+        : preset === 'yesil'
+          ? { accentHue: 150, orb1Opacity: 0.28, orb2Opacity: 0.34, gridOpacity: 0.018, glassBlur: 20 }
+          : { accentHue: 270, orb1Opacity: 0.52, orb2Opacity: 0.22, gridOpacity: 0.028, glassBlur: 24 };
+      state.settings = { ...DEFAULT_SETTINGS, ...(state.settings || {}), ...next };
+      applyTheme();
+      persist();
+      renderView();
+    });
+  });
+
+  document.querySelector('[data-reset-settings]')?.addEventListener('click', () => {
+    state.settings = { ...DEFAULT_SETTINGS };
+    applyTheme();
+    persist();
+    renderView();
+  });
+
+  document.querySelector('[data-reset-demo]')?.addEventListener('click', () => {
+    const currentView = state.settings?.defaultView || DEFAULT_SETTINGS.defaultView;
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(VIEW_KEY);
+    state = seedState();
+    state.settings.defaultView = currentView;
+    applyTheme();
+    persist();
+    renderView();
+  });
+
   document.getElementById('create-form')?.addEventListener('submit', (event) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
@@ -1228,6 +1482,7 @@ function tick() {
 
 async function bootstrapApp() {
   state = loadState();
+  applyTheme();
   if (hasSupabaseConfig) {
     try {
       await initLiveBackend();
