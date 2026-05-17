@@ -64,8 +64,9 @@ window.ZS_CONFIG = {
 Not: Bu projede public tarafta çalışan anahtar için `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` / `anon` değerini kullan.
 
 2. Supabase tarafında Google ve email OTP auth'u aç
-3. GitHub Pages veya lokal sunucuda sayfayı yenile
-4. Üst bar'daki "Email ile giriş" / "Google ile giriş" butonları aktif olur
+3. `supabase/SETUP.md` içindeki migration adımlarını uygula
+4. GitHub Pages veya lokal sunucuda sayfayı yenile
+5. Üst bar'daki "Email ile giriş" / "Google ile giriş" butonları aktif olur
 
 Not:
 - `anon key` public tarafta kullanılabilir.

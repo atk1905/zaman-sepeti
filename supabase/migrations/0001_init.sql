@@ -101,6 +101,23 @@ create index if not exists offers_listing_status_idx on public.offers (listing_i
 create index if not exists offers_sender_created_idx on public.offers (sender_id, created_at desc);
 create index if not exists messages_conversation_created_idx on public.messages (conversation_id, created_at asc);
 
+-- Seed canonical categories so a fresh project renders meaningful content immediately.
+insert into public.categories (name, slug, sort_order)
+values
+  ('Temizlik', 'temizlik', 10),
+  ('Tamir', 'tamir', 20),
+  ('Eğitim', 'egitim', 30),
+  ('Tasarım', 'tasarim', 40),
+  ('Yazılım', 'yazilim', 50),
+  ('Nakliye', 'nakliye', 60),
+  ('Organizasyon', 'organizasyon', 70),
+  ('Sağlık', 'saglik', 80),
+  ('Bakım', 'bakim', 90),
+  ('Danışmanlık', 'danismanlik', 100)
+on conflict (slug) do update
+set name = excluded.name,
+    sort_order = excluded.sort_order;
+
 create trigger profiles_updated_at
 before update on public.profiles
 for each row execute function public.set_updated_at();
