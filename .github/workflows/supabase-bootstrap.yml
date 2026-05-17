@@ -39,9 +39,9 @@ jobs:
           )
           for host in "${candidates[@]}"; do
             echo "Trying pooler host: $host"
-            if psql "host=$host port=6543 dbname=postgres user=postgres.${SUPABASE_PROJECT_REF} sslmode=require" -v ON_ERROR_STOP=1 -c 'select 1' >/tmp/psql_probe.out 2>/tmp/psql_probe.err; then
+            if psql "host=$host port=5432 dbname=postgres user=postgres.${SUPABASE_PROJECT_REF} sslmode=require" -v ON_ERROR_STOP=1 -c 'select 1' >/tmp/psql_probe.out 2>/tmp/psql_probe.err; then
               echo "Selected pooler host: $host"
-              psql "host=$host port=6543 dbname=postgres user=postgres.${SUPABASE_PROJECT_REF} sslmode=require" \
+              psql "host=$host port=5432 dbname=postgres user=postgres.${SUPABASE_PROJECT_REF} sslmode=require" \
                 -v ON_ERROR_STOP=1 \
                 -f supabase/migrations/0001_init.sql
               echo "host=$host" >> "$GITHUB_OUTPUT"
