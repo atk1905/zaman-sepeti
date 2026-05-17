@@ -12,6 +12,13 @@ const categories = [
 
 const cities = ['İstanbul', 'Ankara', 'İzmir', 'Bursa', 'Antalya', 'Online'];
 
+const appConfig = window.ZS_CONFIG || {};
+const hasSupabaseConfig = Boolean(appConfig.supabaseUrl && appConfig.supabaseAnonKey && window.supabase);
+let supabaseClient = null;
+let authUser = null;
+let liveMode = false;
+let categoryIdBySlug = new Map();
+
 const fmtMoney = (value) => new Intl.NumberFormat('tr-TR', {
   style: 'currency',
   currency: 'TRY',
@@ -30,6 +37,169 @@ const uid = () => `zs_${Math.random().toString(36).slice(2, 10)}_${Date.now().to
 const daysFromNow = (days) => new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
 const hoursFromNow = (hours) => new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
 const hoursAgo = (hours) => new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+
+function createListingDeadline(urgency = '7 gün') {
+  if (urgency === 'Bugün Bitsin') return hoursFromNow(24);
+  if (urgency === '24 saat') return hoursFromNow(24);
+  if (urgency === '3 gün') return daysFromNow(3);
+  return daysFromNow(7);
+}
+
+function ensureSupabaseClient() {
+  if (!hasSupabaseConfig) return null;
+  if (!supabaseClient) {
+    supabaseClient = window.supabase.createClient(appConfig.supabaseUrl, appConfig.supabaseAnonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      },
+    });
+  }
+  return supabaseClient;
+}
+
+async function initLiveBackend() {
+  const client = ensureSupabaseClient();
+  if (!client) return false;
+
+  const { data } = await client.auth.getSession();
+  authUser = data?.session?.user || null;
+  client.auth.onAuthStateChange(async (_event, session) => {
+    authUser = session?.user || null;
+    await refreshFromSupabase();
+    renderView();
+  });
+
+  liveMode = true;
+  await refreshFromSupabase();
+  return true;
+}
+
+function mapLiveListings(rows, offersRows, conversationsRows, messagesRows, profilesById) {
+  const offersByListing = new Map();
+  (offersRows || []).forEach((offer) => {
+    const mapped = {
+      id: offer.id,
+      provider: profilesById.get(offer.sender_id)?.display_name || 'Doğrulanmış kullanıcı',
+      amount: Number(offer.price || 0),
+      delivery: offer.eta || 'Belirtilmedi',
+      message: offer.message,
+      createdAt: offer.created_at,
+      status: offer.status,
+    };
+    if (!offersByListing.has(offer.listing_id)) offersByListing.set(offer.listing_id, []);
+    offersByListing.get(offer.listing_id).push(mapped);
+  });
+
+  const conversationByListing = new Map();
+  (conversationsRows || []).forEach((conversation) => {
+    conversationByListing.set(conversation.listing_id, conversation);
+  });
+
+  return (rows || []).map((listing) => {
+    const relatedOffers = (offersByListing.get(listing.id) || []).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const conversation = conversationByListing.get(listing.id);
+    const messages = conversation ? (messagesRows || []).filter((msg) => msg.conversation_id === conversation.id).map((msg) => ({
+      sender: profilesById.get(msg.sender_id)?.display_name || 'Kullanıcı',
+      body: msg.body,
+      createdAt: msg.created_at,
+    })) : [];
+
+    return {
+      id: listing.id,
+      title: listing.title,
+      category: listing.category_slug || listing.category_id,
+      city: listing.city || 'Online',
+      budgetMin: Number(listing.budget_min || 0),
+      budgetMax: Number(listing.budget_max || 0),
+      urgency: listing.urgency || '7 gün',
+      status: listing.status,
+      owner: profilesById.get(listing.owner_id)?.display_name || 'Talep sahibi',
+      provider: relatedOffers[0]?.provider || 'Henüz teklif yok',
+      providerCount: relatedOffers.length || 1,
+      createdAt: listing.created_at,
+      deadline: listing.expires_at,
+      tags: [listing.urgency || '7 gün'],
+      description: listing.description,
+      offers: relatedOffers,
+      acceptedOfferId: listing.accepted_offer_id,
+      conversationId: conversation?.id || null,
+      conversation: messages,
+    };
+  });
+}
+
+async function refreshFromSupabase() {
+  const client = ensureSupabaseClient();
+  if (!client) return false;
+
+  const [
+    { data: categoryRows },
+    { data: listingRows },
+    { data: offerRows },
+    { data: conversationRows },
+    { data: messageRows },
+  ] = await Promise.all([
+    client.from('categories').select('id, name, slug, sort_order'),
+    client.from('listings').select('id, owner_id, title, description, category_id, city, budget_min, budget_max, status, urgency, expires_at, accepted_offer_id, offer_count, created_at'),
+    client.from('offers').select('id, listing_id, sender_id, price, eta, message, status, created_at'),
+    client.from('conversations').select('id, listing_id, offer_id, buyer_id, provider_id, last_message_at, created_at'),
+    client.from('messages').select('id, conversation_id, sender_id, body, created_at'),
+  ]);
+
+  categoryIdBySlug = new Map((categoryRows || []).map((category) => [category.slug, category.id]));
+
+  const profileIds = new Set();
+  (listingRows || []).forEach((row) => profileIds.add(row.owner_id));
+  (offerRows || []).forEach((row) => profileIds.add(row.sender_id));
+  (conversationRows || []).forEach((row) => {
+    profileIds.add(row.buyer_id);
+    profileIds.add(row.provider_id);
+  });
+  (messageRows || []).forEach((row) => profileIds.add(row.sender_id));
+
+  const { data: profiles } = profileIds.size
+    ? await client.from('profiles').select('id, display_name, city, avatar_url').in('id', [...profileIds])
+    : { data: [] };
+
+  const categoriesById = new Map((categoryRows || []).map((category) => [category.id, category]));
+  const profilesById = new Map((profiles || []).map((profile) => [profile.id, profile]));
+  state.listings = mapLiveListings(listingRows || [], offerRows || [], conversationRows || [], messageRows || [], profilesById)
+    .map((listing) => ({
+      ...listing,
+      category: categoriesById.get(listing.category)?.slug || listing.category,
+    }));
+  if (!state.selectedListingId && state.listings[0]) state.selectedListingId = state.listings[0].id;
+  if (!state.selectedThreadId && state.listings[0]) state.selectedThreadId = state.listings[0].id;
+  persist();
+  return true;
+}
+
+async function signInWithEmail(email) {
+  const client = ensureSupabaseClient();
+  if (!client) return;
+  await client.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: window.location.href },
+  });
+  alert('Giriş bağlantısı e-posta adresine gönderildi.');
+}
+
+async function signInWithGoogle() {
+  const client = ensureSupabaseClient();
+  if (!client) return;
+  await client.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: window.location.href },
+  });
+}
+
+async function signOut() {
+  const client = ensureSupabaseClient();
+  if (!client) return;
+  await client.auth.signOut();
+}
 
 function createSeedListings() {
   return [
@@ -285,6 +455,14 @@ function navButton(label, view) {
 function renderTopbar() {
   const activeCount = state.listings.filter((item) => item.status === 'active').length;
   const acceptedCount = state.listings.filter((item) => item.status === 'accepted').length;
+  const authLabel = liveMode
+    ? (authUser?.email ? `Canlı: ${authUser.email}` : 'Canlı veri hazır')
+    : 'Demo modu';
+  const authActions = liveMode
+    ? (authUser
+      ? `<button class="secondary" data-auth-action="signout">Çıkış Yap</button>`
+      : `<button class="secondary" data-auth-action="email">Email ile giriş</button><button class="secondary" data-auth-action="google">Google ile giriş</button>`)
+    : `<button class="secondary" data-auth-action="setup">Supabase bağla</button>`;
   return `
     <header class="topbar">
       <div class="brand">
@@ -305,6 +483,8 @@ function renderTopbar() {
       <div class="badge-row">
         <span class="pill">${activeCount} aktif talep</span>
         <span class="pill">${acceptedCount} kapalı sohbet</span>
+        <span class="pill">${authLabel}</span>
+        ${authActions}
       </div>
     </header>
   `;
@@ -760,6 +940,24 @@ function setSelectedListing(id) {
 }
 
 function acceptOffer(listingId, offerId) {
+  if (liveMode) {
+    (async () => {
+      const client = ensureSupabaseClient();
+      if (!client) return;
+      const { error } = await client.rpc('accept_offer_and_open_conversation', { p_offer_id: offerId });
+      if (error) {
+        alert(`Teklif kabul edilemedi: ${error.message}`);
+        return;
+      }
+      await refreshFromSupabase();
+      state.view = 'messages';
+      state.selectedThreadId = listingId;
+      state.selectedListingId = listingId;
+      renderView();
+    })();
+    return;
+  }
+
   state.listings = state.listings.map((listing) => {
     if (listing.id !== listingId) return listing;
     const acceptedOffer = listing.offers.find((offer) => offer.id === offerId);
@@ -790,6 +988,31 @@ function acceptOffer(listingId, offerId) {
 }
 
 function addOffer(listingId, formData) {
+  if (liveMode) {
+    (async () => {
+      const client = ensureSupabaseClient();
+      if (!client || !authUser) {
+        alert('Teklif vermek için giriş yapın.');
+        return;
+      }
+      const { error } = await client.from('offers').insert({
+        listing_id: listingId,
+        sender_id: authUser.id,
+        price: Number(formData.get('amount')),
+        eta: formData.get('delivery'),
+        message: formData.get('message'),
+        status: 'pending',
+      });
+      if (error) {
+        alert(`Teklif gönderilemedi: ${error.message}`);
+        return;
+      }
+      await refreshFromSupabase();
+      renderView();
+    })();
+    return;
+  }
+
   const offer = {
     id: uid(),
     provider: formData.get('provider'),
@@ -808,6 +1031,41 @@ function addOffer(listingId, formData) {
 }
 
 function createListing(formData) {
+  if (liveMode) {
+    (async () => {
+      const client = ensureSupabaseClient();
+      if (!client || !authUser) {
+        alert('Talep oluşturmak için giriş yapın.');
+        return;
+      }
+      const categorySlug = formData.get('category');
+      const categoryId = categoryIdBySlug.get(categorySlug);
+      const payload = {
+        owner_id: authUser.id,
+        title: formData.get('title'),
+        description: formData.get('description'),
+        category_id: categoryId,
+        city: formData.get('city'),
+        budget_min: Math.min(Number(formData.get('budgetMin')), Number(formData.get('budgetMax'))),
+        budget_max: Math.max(Number(formData.get('budgetMin')), Number(formData.get('budgetMax'))),
+        status: 'active',
+        urgency: formData.get('urgency'),
+        expires_at: createListingDeadline(formData.get('urgency')),
+      };
+      const { data, error } = await client.from('listings').insert(payload).select('id').single();
+      if (error) {
+        alert(`Talep oluşturulamadı: ${error.message}`);
+        return;
+      }
+      state.selectedListingId = data.id;
+      state.selectedThreadId = data.id;
+      state.view = 'market';
+      await refreshFromSupabase();
+      renderView();
+    })();
+    return;
+  }
+
   const min = Number(formData.get('budgetMin'));
   const max = Number(formData.get('budgetMax'));
   const created = {
@@ -839,6 +1097,33 @@ function createListing(formData) {
 }
 
 function sendChatMessage(listingId, message) {
+  if (liveMode) {
+    (async () => {
+      const client = ensureSupabaseClient();
+      if (!client || !authUser) {
+        alert('Mesaj göndermek için giriş yapın.');
+        return;
+      }
+      const listing = state.listings.find((item) => item.id === listingId);
+      if (!listing?.conversationId) {
+        alert('Bu sohbet henüz açılmadı.');
+        return;
+      }
+      const { error } = await client.from('messages').insert({
+        conversation_id: listing.conversationId,
+        sender_id: authUser.id,
+        body: message,
+      });
+      if (error) {
+        alert(`Mesaj gönderilemedi: ${error.message}`);
+        return;
+      }
+      await refreshFromSupabase();
+      renderView();
+    })();
+    return;
+  }
+
   state.listings = state.listings.map((listing) => {
     if (listing.id !== listingId) return listing;
     const next = {
@@ -858,6 +1143,28 @@ function bindEvents() {
       const view = btn.getAttribute('data-view');
       if (btn.hasAttribute('data-category')) state.filterCategory = btn.getAttribute('data-category');
       setView(view);
+    });
+  });
+
+  document.querySelectorAll('[data-auth-action]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const action = btn.getAttribute('data-auth-action');
+      if (action === 'signout') {
+        await signOut();
+        return;
+      }
+      if (action === 'email') {
+        const email = window.prompt('Giriş e-postanızı yazın');
+        if (email) await signInWithEmail(email.trim());
+        return;
+      }
+      if (action === 'google') {
+        await signInWithGoogle();
+        return;
+      }
+      if (action === 'setup') {
+        alert('Supabase için config.js içindeki supabaseUrl ve supabaseAnonKey alanlarını doldurun.');
+      }
     });
   });
 
@@ -919,11 +1226,24 @@ function tick() {
   renderView();
 }
 
-renderView();
-setInterval(tick, 1000);
-window.addEventListener('storage', (event) => {
-  if (event.key === STORAGE_KEY || event.key === VIEW_KEY) {
-    state = loadState();
-    renderView();
+async function bootstrapApp() {
+  state = loadState();
+  if (hasSupabaseConfig) {
+    try {
+      await initLiveBackend();
+    } catch (error) {
+      console.warn('Supabase init failed, staying in demo mode', error);
+      liveMode = false;
+    }
   }
-});
+  renderView();
+  setInterval(tick, 1000);
+  window.addEventListener('storage', (event) => {
+    if (event.key === STORAGE_KEY || event.key === VIEW_KEY) {
+      state = loadState();
+      renderView();
+    }
+  });
+}
+
+bootstrapApp();

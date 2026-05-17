@@ -47,6 +47,30 @@ Sonra tarayıcıda aç:
 
 `http://localhost:8080`
 
+## Canlı Supabase bağlantısı
+
+Repo, config dosyası varsa otomatik olarak canlı moda geçer.
+
+1. `config.js` içindeki değerleri doldur:
+
+```js
+window.ZS_CONFIG = {
+  supabaseUrl: 'https://YOUR-PROJECT.supabase.co',
+  supabaseAnonKey: 'YOUR_ANON_KEY',
+  appName: 'Zaman Sepeti',
+};
+```
+
+2. Supabase tarafında Google ve email OTP auth'u aç
+3. GitHub Pages veya lokal sunucuda sayfayı yenile
+4. Üst bar'daki "Email ile giriş" / "Google ile giriş" butonları aktif olur
+
+Not:
+- `anon key` public tarafta kullanılabilir.
+- Service role key client tarafına konmaz.
+- Teklif kabulü RPC ile çalışır: `accept_offer_and_open_conversation`
+- 7 günlük kapanış için Edge Function: `expire_old_listings`
+
 ## Hermes tetikleyici
 
 Repo içindeki `docs/agent-commands.md` dosyasında tek satırlık tetikleyici ve rol bazlı prompt'lar var.

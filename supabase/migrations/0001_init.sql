@@ -1,5 +1,5 @@
--- Zaman Sepeti initial schema
--- Supabase / Postgres MVP blueprint
+-- Zaman Sepeti production schema for Supabase
+-- Demand-first marketplace with 7-day expiry, offers, and accepted-offer chat.
 
 create extension if not exists pgcrypto;
 
@@ -113,6 +113,30 @@ create trigger offers_updated_at
 before update on public.offers
 for each row execute function public.set_updated_at();
 
+-- Automatically create a profile row for newly created auth users.
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.profiles (id, display_name, city)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data ->> 'display_name', new.raw_user_meta_data ->> 'full_name', split_part(new.email, '@', 1), 'Yeni kullanıcı'),
+    new.raw_user_meta_data ->> 'city'
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+after insert on auth.users
+for each row execute function public.handle_new_user();
+
 alter table public.profiles enable row level security;
 alter table public.categories enable row level security;
 alter table public.listings enable row level security;
@@ -151,7 +175,7 @@ for update using (owner_id = auth.uid()) with check (owner_id = auth.uid());
 create policy "owners can delete listings" on public.listings
 for delete using (owner_id = auth.uid());
 
--- Offers
+-- Offers: read by sender or listing owner, insert only by sender.
 create policy "offers are readable by sender or listing owner" on public.offers
 for select using (
   sender_id = auth.uid()
@@ -170,20 +194,11 @@ for insert with check (
   )
 );
 
-create policy "senders or owners can update offers" on public.offers
-for update using (
-  sender_id = auth.uid()
-  or exists (
-    select 1 from public.listings l
-    where l.id = offers.listing_id and l.owner_id = auth.uid()
-  )
-) with check (
-  sender_id = auth.uid()
-  or exists (
-    select 1 from public.listings l
-    where l.id = offers.listing_id and l.owner_id = auth.uid()
-  )
-);
+create policy "senders can update pending offers" on public.offers
+for update using (sender_id = auth.uid() and status = 'pending')
+with check (sender_id = auth.uid() and status = 'pending');
+
+drop policy if exists "senders or owners can update offers" on public.offers;
 
 -- Conversations and messages
 create policy "participants can read conversations" on public.conversations
@@ -222,11 +237,12 @@ for all using (
   )
 );
 
--- Expiry helper for scheduled function / cron
+-- Expiry helper for scheduled function / cron.
 create or replace function public.expire_old_listings()
 returns void
 language plpgsql
 security definer
+set search_path = public
 as $$
 begin
   update public.listings
@@ -237,4 +253,67 @@ begin
 end;
 $$;
 
+-- Atomic accept + conversation creation RPC.
+create or replace function public.accept_offer_and_open_conversation(p_offer_id uuid)
+returns table(conversation_id uuid, accepted_offer_id uuid)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_offer public.offers%rowtype;
+  v_listing public.listings%rowtype;
+  v_conversation_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'not_authenticated';
+  end if;
+
+  select * into v_offer
+  from public.offers
+  where id = p_offer_id
+  for update;
+
+  if not found then
+    raise exception 'offer_not_found';
+  end if;
+
+  select * into v_listing
+  from public.listings
+  where id = v_offer.listing_id
+  for update;
+
+  if v_listing.owner_id <> auth.uid() then
+    raise exception 'not_allowed';
+  end if;
+
+  if v_offer.status <> 'pending' or v_listing.status <> 'active' then
+    raise exception 'offer_not_pending_or_listing_inactive';
+  end if;
+
+  update public.offers
+  set status = case when id = p_offer_id then 'accepted' else 'rejected' end
+  where listing_id = v_listing.id;
+
+  update public.listings
+  set status = 'accepted',
+      accepted_offer_id = p_offer_id,
+      offer_count = greatest(offer_count, 1)
+  where id = v_listing.id;
+
+  insert into public.conversations (listing_id, offer_id, buyer_id, provider_id)
+  values (v_listing.id, p_offer_id, v_listing.owner_id, v_offer.sender_id)
+  on conflict (listing_id) do update
+    set offer_id = excluded.offer_id,
+        buyer_id = excluded.buyer_id,
+        provider_id = excluded.provider_id
+  returning id into v_conversation_id;
+
+  conversation_id := v_conversation_id;
+  accepted_offer_id := p_offer_id;
+  return next;
+end;
+$$;
+
 comment on function public.expire_old_listings() is 'Call from Supabase scheduled Edge Function or cron';
+comment on function public.accept_offer_and_open_conversation(uuid) is 'Accept an offer atomically and open the conversation';
