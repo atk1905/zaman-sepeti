@@ -252,6 +252,55 @@ body::before {
   letter-spacing: -0.03em;
 }
 
+.auth-shell {
+  display: grid;
+  gap: 18px;
+}
+.auth-hero {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 16px;
+  align-items: stretch;
+}
+.auth-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.auth-card,
+.auth-panel-note {
+  min-height: 100%;
+}
+.auth-form {
+  display: grid;
+  gap: 12px;
+}
+.auth-form label {
+  display: grid;
+  gap: 8px;
+}
+.auth-form span {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.auth-form input {
+  width: 100%;
+  padding: 14px 15px;
+  border-radius: 14px;
+  border: 1px solid var(--stroke);
+  background: rgba(255,255,255,0.05);
+  color: var(--text);
+  outline: none;
+}
+.auth-form input:focus {
+  border-color: hsla(var(--accent-hue), 82%, 62%, 0.8);
+  box-shadow: 0 0 0 3px hsla(var(--accent-hue), 82%, 60%, 0.12);
+}
+.auth-provider-actions {
+  gap: 10px;
+}
+
+.listing-layout { display: grid; grid-template-columns: 1.14fr 0.86fr; gap: 16px; }
 .filters {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -271,8 +320,6 @@ body::before {
 textarea { min-height: 120px; resize: vertical; }
 .input::placeholder, textarea::placeholder { color: #64748b; }
 .input:focus, select:focus, textarea:focus { border-color: rgba(124,58,237,0.8); box-shadow: 0 0 0 3px rgba(124,58,237,.18); }
-
-.listing-layout { display: grid; grid-template-columns: 1.14fr 0.86fr; gap: 16px; }
 .listing-list {
   display: grid;
   gap: 12px;

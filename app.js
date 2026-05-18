@@ -262,29 +262,68 @@ async function refreshFromSupabase() {
   return true;
 }
 
-async function signInWithEmail(email) {
+async function authRequest(run, friendlyError) {
+  try {
+    return await run();
+  } catch (error) {
+    console.error(error);
+    alert(`${friendlyError}: ${error?.message || 'Bilinmeyen hata'}`);
+    return null;
+  }
+}
+
+const authRedirectUrl = `${window.location.origin}${window.location.pathname}`;
+
+async function signInWithEmailLink(email) {
   const client = ensureSupabaseClient();
   if (!client) return;
-  await client.auth.signInWithOtp({
+  return authRequest(() => client.auth.signInWithOtp({
     email,
-    options: { emailRedirectTo: window.location.href },
-  });
-  alert('Giriş bağlantısı e-posta adresine gönderildi.');
+    options: { emailRedirectTo: authRedirectUrl },
+  }), 'E-posta bağlantısı gönderilemedi');
+}
+
+async function signInWithPassword(email, password) {
+  const client = ensureSupabaseClient();
+  if (!client) return;
+  return authRequest(() => client.auth.signInWithPassword({ email, password }), 'Email girişi başarısız');
+}
+
+async function signUpWithEmail(email, password, displayName, city) {
+  const client = ensureSupabaseClient();
+  if (!client) return;
+  return authRequest(() => client.auth.signUp({
+    email,
+    password,
+    options: {
+      emailRedirectTo: authRedirectUrl,
+      data: { display_name: displayName, full_name: displayName, city },
+    },
+  }), 'Kayıt başarısız');
 }
 
 async function signInWithGoogle() {
   const client = ensureSupabaseClient();
   if (!client) return;
-  await client.auth.signInWithOAuth({
+  return authRequest(() => client.auth.signInWithOAuth({
     provider: 'google',
-    options: { redirectTo: window.location.href },
-  });
+    options: { redirectTo: authRedirectUrl },
+  }), 'Google girişi başarısız');
+}
+
+async function signInWithApple() {
+  const client = ensureSupabaseClient();
+  if (!client) return;
+  return authRequest(() => client.auth.signInWithOAuth({
+    provider: 'apple',
+    options: { redirectTo: authRedirectUrl },
+  }), 'Apple girişi başarısız');
 }
 
 async function signOut() {
   const client = ensureSupabaseClient();
   if (!client) return;
-  await client.auth.signOut();
+  return authRequest(() => client.auth.signOut(), 'Çıkış yapılamadı');
 }
 
 function createSeedListings() {
@@ -563,7 +602,7 @@ function renderTopbar() {
   const authActions = liveMode
     ? (authUser
       ? `<button class="secondary" data-auth-action="signout">Çıkış Yap</button>`
-      : `<button class="secondary" data-auth-action="email">Email ile giriş</button><button class="secondary" data-auth-action="google">Google ile giriş</button>`)
+      : `<button class="secondary" data-view="auth">Giriş Yap / Kaydol</button>`)
     : `<button class="secondary" data-auth-action="setup">Supabase bağla</button>`;
   const adminNav = isAdminUser ? navButton('Yönetim', 'admin') : '';
   const adminBadge = isAdminUser ? '<span class="pill">Admin yetkisi açık</span>' : '';
@@ -952,6 +991,99 @@ function renderMessages() {
   `;
 }
 
+function renderAuthScreen() {
+  return `
+    <section class="section auth-shell">
+      <div class="auth-hero">
+        <div>
+          <span class="pill">Güvenli giriş</span>
+          <h3>Zaman Sepeti'ne giriş yap</h3>
+          <p class="lead">Google, Apple, e-posta bağlantısı veya şifreli kayıt ile devam et. Kayıt sonrası profil otomatik oluşur.</p>
+          <div class="badge-row">
+            <span class="pill">Google</span>
+            <span class="pill">Apple</span>
+            <span class="pill">Mail linki</span>
+            <span class="pill">Mail & şifre</span>
+          </div>
+        </div>
+        <div class="panel auth-panel-note">
+          <strong>İpucu</strong>
+          <p class="muted">Google ve Apple girişleri için Supabase Authentication sağlayıcılarını dashboard'da açman gerekir.</p>
+        </div>
+      </div>
+      <div class="auth-grid">
+        <div class="panel auth-card">
+          <div class="section-head">
+            <div>
+              <h4>Mail ile giriş</h4>
+              <p>Şifre ile giriş yapabilir veya bağlantı linki isteyebilirsin.</p>
+            </div>
+          </div>
+          <form class="auth-form" id="login-form">
+            <label>
+              <span>E-posta</span>
+              <input name="email" type="email" placeholder="ornek@mail.com" required />
+            </label>
+            <label>
+              <span>Şifre</span>
+              <input name="password" type="password" placeholder="••••••••" />
+            </label>
+            <div class="hero-actions">
+              <button class="primary" type="submit">Mail ile giriş</button>
+              <button class="secondary" type="button" data-auth-action="email-link">Giriş linki gönder</button>
+            </div>
+          </form>
+        </div>
+        <div class="panel auth-card">
+          <div class="section-head">
+            <div>
+              <h4>Mail ile kaydol</h4>
+              <p>Yeni kullanıcı oluştur, profil adını da birlikte kaydet.</p>
+            </div>
+          </div>
+          <form class="auth-form" id="signup-form">
+            <label>
+              <span>Ad / görünüm adı</span>
+              <input name="display_name" type="text" placeholder="Ayşe Yılmaz" required />
+            </label>
+            <label>
+              <span>Şehir</span>
+              <input name="city" type="text" placeholder="İstanbul" />
+            </label>
+            <label>
+              <span>E-posta</span>
+              <input name="email" type="email" placeholder="ornek@mail.com" required />
+            </label>
+            <label>
+              <span>Şifre</span>
+              <input name="password" type="password" minlength="8" placeholder="En az 8 karakter" required />
+            </label>
+            <div class="hero-actions">
+              <button class="primary" type="submit">Mail ile kaydol</button>
+            </div>
+          </form>
+        </div>
+        <div class="panel auth-card">
+          <div class="section-head">
+            <div>
+              <h4>Hızlı sosyal giriş</h4>
+              <p>Apple ve Google hesabınla tek tıkla devam et.</p>
+            </div>
+          </div>
+          <div class="hero-actions auth-provider-actions">
+            <button class="secondary" type="button" data-auth-action="google">Google ile giriş</button>
+            <button class="secondary" type="button" data-auth-action="apple">Apple ile giriş</button>
+          </div>
+          <div class="listing-list" style="margin-top:14px;">
+            <div class="offer-item"><strong>Google çalışmıyorsa</strong><small>Supabase dashboard'da provider'ı aç ve redirect URL'yi ekle.</small></div>
+            <div class="offer-item"><strong>Apple için</strong><small>Apple OAuth / Sign in with Apple ayarlarını Supabase tarafında tamamla.</small></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 function renderAbout() {
   return `
     <section class="section section-grid">
@@ -1117,7 +1249,11 @@ function renderAdmin() {
 
 function renderView() {
   applyTheme();
+  if (liveMode && !authUser) {
+    state.view = 'auth';
+  }
   const body = (() => {
+    if (state.view === 'auth') return renderAuthScreen();
     switch (state.view) {
       case 'market': return renderMarket();
       case 'create': return renderCreate();
@@ -1139,9 +1275,11 @@ function renderView() {
     ${renderTopbar()}
     <section class="hero" style="margin-top:18px">
       <div>
-        <span class="pill">Canlı demo · GitHub Pages hazır</span>
-        <h2>${state.view === 'home' ? 'Zaman odaklı marketplace.' : state.view === 'market' ? 'Canlı talep akışı.' : state.view === 'create' ? 'Yeni talep yayınla.' : state.view === 'messages' ? 'Kabul sonrası sohbet.' : state.view === 'profile' ? 'Güven ve görünürlük.' : 'Maya Elektronik Bilişim çatısı.'}</h2>
-        <p class="lead">${state.view === 'home'
+        <span class="pill">${liveMode && !authUser ? 'Giriş gerekli' : 'Canlı demo · GitHub Pages hazır'}</span>
+        <h2>${liveMode && !authUser ? 'Hesabına giriş yap.' : state.view === 'home' ? 'Zaman odaklı marketplace.' : state.view === 'market' ? 'Canlı talep akışı.' : state.view === 'create' ? 'Yeni talep yayınla.' : state.view === 'messages' ? 'Kabul sonrası sohbet.' : state.view === 'profile' ? 'Güven ve görünürlük.' : 'Maya Elektronik Bilişim çatısı.'}</h2>
+        <p class="lead">${liveMode && !authUser
+          ? 'Google, Apple veya e-posta ile giriş yaparak devam et. Yeni kullanıcılar burada kayıt olabilir.'
+          : state.view === 'home'
           ? 'Bu prototip, talep açma, teklif toplama, 7 günlük sayaç ve kabul sonrası iletişim kilidiyle çalışan bir MVP anlatımıdır.'
           : 'Filtreleri kullan, ilanı seç, teklif ver veya bir talebi yayınla.'}</p>
       </div>
@@ -1399,18 +1537,50 @@ function bindEvents() {
         return;
       }
       if (action === 'email') {
-        const email = window.prompt('Giriş e-postanızı yazın');
-        if (email) await signInWithEmail(email.trim());
+        state.view = 'auth';
+        persist();
+        renderView();
+        return;
+      }
+      if (action === 'email-link') {
+        const form = document.getElementById('login-form');
+        const email = String(form?.querySelector('input[name="email"]')?.value || '').trim();
+        if (!email) return alert('Önce e-posta gir.');
+        await signInWithEmailLink(email);
         return;
       }
       if (action === 'google') {
         await signInWithGoogle();
         return;
       }
+      if (action === 'apple') {
+        await signInWithApple();
+        return;
+      }
       if (action === 'setup') {
         alert('Supabase için config.js içindeki supabaseUrl ve supabaseAnonKey alanlarını doldurun.');
       }
     });
+  });
+
+  document.getElementById('login-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const email = String(formData.get('email') || '').trim();
+    const password = String(formData.get('password') || '').trim();
+    if (!email || !password) return alert('E-posta ve şifre gerekli.');
+    await signInWithPassword(email, password);
+  });
+
+  document.getElementById('signup-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const email = String(formData.get('email') || '').trim();
+    const password = String(formData.get('password') || '').trim();
+    const displayName = String(formData.get('display_name') || '').trim();
+    const city = String(formData.get('city') || '').trim();
+    if (!email || !password || !displayName) return alert('Ad, e-posta ve şifre gerekli.');
+    await signUpWithEmail(email, password, displayName, city);
   });
 
   document.querySelectorAll('[data-select-listing]').forEach((item) => {
