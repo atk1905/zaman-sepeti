@@ -73,11 +73,14 @@ const DEFAULT_SETTINGS = {
 };
 
 const appConfig = window.ZS_CONFIG || {};
+const adminEmails = new Set((appConfig.adminEmails || ['atakan21ai@gmail.com']).map((email) => String(email).toLowerCase()));
 const hasSupabaseConfig = Boolean(appConfig.supabaseUrl && appConfig.supabaseAnonKey && window.supabase);
 let supabaseClient = null;
 let authUser = null;
 let liveMode = false;
 let categoryIdBySlug = new Map();
+let currentProfile = null;
+let isAdminUser = false;
 
 const fmtMoney = (value) => new Intl.NumberFormat('tr-TR', {
   style: 'currency',
@@ -105,6 +108,15 @@ function createListingDeadline(urgency = '7 gün') {
   return daysFromNow(7);
 }
 
+function recomputeAdminAccess() {
+  const email = String(authUser?.email || '').toLowerCase();
+  const role = String(currentProfile?.role || '').toLowerCase();
+  isAdminUser = Boolean(email && adminEmails.has(email)) || role === 'admin';
+  if (!isAdminUser && state?.view === 'admin') {
+    state.view = state.settings?.defaultView || 'home';
+  }
+}
+
 function ensureSupabaseClient() {
   if (!hasSupabaseConfig) return null;
   if (!supabaseClient) {
@@ -127,6 +139,8 @@ async function initLiveBackend() {
   authUser = data?.session?.user || null;
   client.auth.onAuthStateChange(async (_event, session) => {
     authUser = session?.user || null;
+    currentProfile = null;
+    recomputeAdminAccess();
     await refreshFromSupabase();
     renderView();
   });
@@ -200,12 +214,16 @@ async function refreshFromSupabase() {
     { data: offerRows },
     { data: conversationRows },
     { data: messageRows },
+    currentProfileResult,
   ] = await Promise.all([
     client.from('categories').select('id, name, slug, sort_order'),
     client.from('listings').select('id, owner_id, title, description, category_id, city, budget_min, budget_max, status, urgency, expires_at, accepted_offer_id, offer_count, created_at'),
     client.from('offers').select('id, listing_id, sender_id, price, eta, message, status, created_at'),
     client.from('conversations').select('id, listing_id, offer_id, buyer_id, provider_id, last_message_at, created_at'),
     client.from('messages').select('id, conversation_id, sender_id, body, created_at'),
+    authUser
+      ? client.from('profiles').select('id, display_name, city, avatar_url, role, is_verified').eq('id', authUser.id).maybeSingle()
+      : Promise.resolve({ data: null }),
   ]);
 
   categoryIdBySlug = new Map((categoryRows || []).map((category) => [category.slug, category.id]));
@@ -220,11 +238,18 @@ async function refreshFromSupabase() {
   (messageRows || []).forEach((row) => profileIds.add(row.sender_id));
 
   const { data: profiles } = profileIds.size
-    ? await client.from('profiles').select('id, display_name, city, avatar_url').in('id', [...profileIds])
+    ? await client.from('profiles').select('id, display_name, city, avatar_url, role').in('id', [...profileIds])
     : { data: [] };
 
   const categoriesById = new Map((categoryRows || []).map((category) => [category.id, category]));
   const profilesById = new Map((profiles || []).map((profile) => [profile.id, profile]));
+  if (currentProfileResult?.data) {
+    currentProfile = currentProfileResult.data;
+    profilesById.set(currentProfile.id, currentProfile);
+  } else {
+    currentProfile = null;
+  }
+  recomputeAdminAccess();
   state.listings = mapLiveListings(listingRows || [], offerRows || [], conversationRows || [], messageRows || [], profilesById)
     .map((listing) => ({
       ...listing,
@@ -232,6 +257,7 @@ async function refreshFromSupabase() {
     }));
   if (!state.selectedListingId && state.listings[0]) state.selectedListingId = state.listings[0].id;
   if (!state.selectedThreadId && state.listings[0]) state.selectedThreadId = state.listings[0].id;
+  recomputeAdminAccess();
   persist();
   return true;
 }
@@ -539,6 +565,8 @@ function renderTopbar() {
       ? `<button class="secondary" data-auth-action="signout">Çıkış Yap</button>`
       : `<button class="secondary" data-auth-action="email">Email ile giriş</button><button class="secondary" data-auth-action="google">Google ile giriş</button>`)
     : `<button class="secondary" data-auth-action="setup">Supabase bağla</button>`;
+  const adminNav = isAdminUser ? navButton('Yönetim', 'admin') : '';
+  const adminBadge = isAdminUser ? '<span class="pill">Admin yetkisi açık</span>' : '';
   return `
     <header class="topbar">
       <div class="brand">
@@ -555,13 +583,14 @@ function renderTopbar() {
         ${navButton('Mesajlar', 'messages')}
         ${navButton('Profil', 'profile')}
         ${navButton('Hakkında', 'about')}
-        ${navButton('Yönetim', 'admin')}
+        ${adminNav}
       </nav>
       <div class="badge-row">
         <span class="pill">${activeCount} aktif talep</span>
         <span class="pill">${acceptedCount} kapalı sohbet</span>
         <span class="pill">${settingLabel}</span>
         <span class="pill">${authLabel}</span>
+        ${adminBadge}
         ${authActions}
       </div>
     </header>
@@ -950,7 +979,24 @@ function renderAbout() {
   `;
 }
 
+function renderAdminLocked() {
+  return `
+    <section class="section admin-shell">
+      <div class="panel admin-panel">
+        <h3>Yönetim kilitli</h3>
+        <p class="muted">Bu alan sadece admin rolü olan oturumlarla açılır. Lütfen admin hesabınla giriş yap.</p>
+        <div class="listing-list">
+          <div class="offer-item"><strong>Oturum</strong><small>${authUser?.email || 'Giriş yapılmadı'}</small></div>
+          <div class="offer-item"><strong>Durum</strong><small>${liveMode ? 'Supabase oturumu aktif' : 'Demo modunda admin yok'}</small></div>
+          <div class="offer-item"><strong>Yetki</strong><small>public.profiles.role = admin</small></div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 function renderAdmin() {
+  if (!isAdminUser) return renderAdminLocked();
   const settings = state.settings || DEFAULT_SETTINGS;
   return `
     <section class="section admin-shell">
@@ -962,6 +1008,7 @@ function renderAdmin() {
         <div class="badge-row">
           <span class="pill">${liveMode ? 'Supabase bağlı' : 'Demo modu'}</span>
           <span class="pill">${authUser?.email || 'Anonim yönetici'}</span>
+          <span class="pill">${currentProfile?.role || 'role yok'}</span>
         </div>
       </div>
 
@@ -1055,6 +1102,10 @@ function renderAdmin() {
             <div class="hero-actions">
               <button class="primary" data-reset-demo>Yerel demoyu sıfırla</button>
               <button class="secondary" data-view="market">Canlı akışı aç</button>
+            </div>
+            <div class="listing-list" style="margin-top:14px;">
+              <div class="offer-item"><strong>Gerçek admin kuralı</strong><small>Supabase profiles tablosunda role = admin olan kullanıcılar yönetim panelini görür.</small></div>
+              <div class="offer-item"><strong>Allowlist</strong><small>${[...adminEmails].join(', ')}</small></div>
             </div>
           </div>
         </div>
@@ -1483,6 +1534,7 @@ function tick() {
 async function bootstrapApp() {
   state = loadState();
   applyTheme();
+  recomputeAdminAccess();
   if (hasSupabaseConfig) {
     try {
       await initLiveBackend();
